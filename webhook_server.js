@@ -11,7 +11,7 @@ app.use(express.json());
 
 // Configuration
 const PORT = process.env.PORT || 10000;
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || 'wa_api_2026';
+const VERIFY_TOKEN = process.env.VERIFY_TOKEN || process.env.WHATSAPP_VERIFY_TOKEN || 'wa_api_2026';
 const CLOUD_FUNCTION_URL = 'https://whatsapp-proxy-66mhuvutfa-uc.a.run.app';
 const PROCESSING_API_URL = process.env.PROCESSING_API_URL || 'http://localhost:5000/api/process-approval';
 
@@ -29,23 +29,29 @@ app.get('/health', (req, res) => {
   });
 });
 
-// Webhook verification (GET)
-app.get('/webhook', (req, res) => {
+// Webhook verification handler
+function handleVerification(req, res) {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
+
+  console.log('Verification attempt:', { mode, token: token ? '***' : undefined, challenge });
 
   if (mode === 'subscribe' && token === VERIFY_TOKEN) {
     console.log('✅ Webhook verified successfully!');
     res.status(200).send(challenge);
   } else {
-    console.log('❌ Webhook verification failed');
+    console.log('❌ Webhook verification failed - Token mismatch');
     res.status(403).send('Verification failed');
   }
-});
+}
 
-// Webhook message receiver (POST)
-app.post('/webhook', async (req, res) => {
+// Webhook verification (GET) - Support both root and /webhook paths
+app.get('/', handleVerification);
+app.get('/webhook', handleVerification);
+
+// Webhook message receiver handler
+async function handleIncomingWebhook(req, res) {
   try {
     const data = req.body;
 
@@ -86,7 +92,11 @@ app.post('/webhook', async (req, res) => {
   } catch (error) {
     console.error('❌ Error processing webhook:', error.message);
   }
-});
+}
+
+// Webhook message receiver (POST) - Support both root and /webhook paths
+app.post('/', handleIncomingWebhook);
+app.post('/webhook', handleIncomingWebhook);
 
 // Process incoming WhatsApp message
 async function processIncomingMessage(phoneNumber, messageText) {
@@ -313,7 +323,9 @@ app.listen(PORT, () => {
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log(`✅ WhatsApp Webhook Server Running`);
   console.log(`📍 Port: ${PORT}`);
-  console.log(`🔗 Webhook URL: https://wa-api-p2yf.onrender.com/webhook`);
+  console.log(`🔗 Webhook URL (both supported):`);
+  console.log(`   - https://wa-api-p2yf.onrender.com/`);
+  console.log(`   - https://wa-api-p2yf.onrender.com/webhook`);
   console.log(`🏥 Health Check: https://wa-api-p2yf.onrender.com/health`);
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 });
