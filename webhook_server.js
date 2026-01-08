@@ -90,23 +90,64 @@ app.post('/webhook', async (req, res) => {
 
 // Process incoming WhatsApp message
 async function processIncomingMessage(phoneNumber, messageText) {
+  const requestId = `REQ-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  const timestamp = new Date().toISOString();
+
   try {
+    console.log(`\n${'='.repeat(80)}`);
+    console.log(`[${timestamp}] 📥 NEW WHATSAPP REQUEST`);
+    console.log(`Request ID: ${requestId}`);
+    console.log(`Phone Number: ${phoneNumber}`);
+    console.log(`Message: "${messageText}"`);
+    console.log(`${'='.repeat(80)}\n`);
+
     // Clean the message
     const approvalNumber = messageText.trim();
 
     // Check if it's an 8-digit approval number
     if (!/^\d{8}$/.test(approvalNumber)) {
+      console.log(`[${requestId}] ⚠️ Invalid format - Expected 8 digits, got: "${approvalNumber}"`);
       await sendHelpMessage(phoneNumber);
+      console.log(`[${requestId}] ✅ Help message sent\n`);
       return;
     }
 
-    console.log(`🔄 Processing approval number: ${approvalNumber}`);
+    console.log(`[${requestId}] ✅ Valid approval number: ${approvalNumber}`);
 
-    // Try to process through AI pipeline (if available)
+    // Try to process through AI pipeline
+    console.log(`[${requestId}] 🔄 Initiating AI processing...`);
+    console.log(`[${requestId}] 🌐 API URL: ${PROCESSING_API_URL}`);
+    console.log(`[${requestId}] ⏱️ Timeout: 60 seconds`);
+
     try {
-      const response = await axios.post(PROCESSING_API_URL, {
+      const startTime = Date.now();
+
+      // Start the API call without waiting for completion
+      const apiPromise = axios.post(PROCESSING_API_URL, {
         approval_number: approvalNumber
       }, { timeout: 60000 });
+
+      // Wait briefly to confirm the request was accepted (not failed immediately)
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      console.log(`[${requestId}] ✅ Request successfully delivered to AI pipeline`);
+
+      // Send acknowledgment AFTER confirming pipeline accepted the request
+      const acknowledgment = `🤖 I'm AI Agent, I'll check your request and reply ASAP\n\n` +
+                            `أنا وكيل الذكاء الاصطناعي، سأتحقق من طلبك وأرد في أقرب وقت\n\n` +
+                            `Approval Number: ${approvalNumber}`;
+
+      console.log(`[${requestId}] 📤 Sending acknowledgment (pipeline initiated)...`);
+      await sendResponseMessage(phoneNumber, acknowledgment);
+      console.log(`[${requestId}] ✅ Acknowledgment sent successfully`);
+
+      // Now wait for the actual AI processing to complete
+      console.log(`[${requestId}] ⏳ Waiting for AI processing to complete...`);
+      const response = await apiPromise;
+      const processingTime = ((Date.now() - startTime) / 1000).toFixed(2);
+
+      console.log(`[${requestId}] ✅ AI processing completed in ${processingTime}s`);
+      console.log(`[${requestId}] 📊 Response status: ${response.status}`);
 
       const result = response.data;
 
@@ -114,48 +155,93 @@ async function processIncomingMessage(phoneNumber, messageText) {
         const csMessage = result.ui_output_8;
         const overallResponse = result.overall_response || 'A';
 
+        console.log(`[${requestId}] 📋 AI Result:`);
+        console.log(`[${requestId}]    - Overall Response: ${overallResponse}`);
+        console.log(`[${requestId}]    - CS Message Length: ${csMessage.length} chars`);
+
         const formattedMessage = formatResponseMessage(
           approvalNumber,
           csMessage,
           overallResponse
         );
 
+        console.log(`[${requestId}] 📤 Sending final response to customer...`);
         await sendResponseMessage(phoneNumber, formattedMessage);
+        console.log(`[${requestId}] ✅ Final response sent successfully`);
+        console.log(`[${requestId}] 🎉 Request completed successfully in ${processingTime}s\n`);
       } else {
+        console.log(`[${requestId}] ❌ Invalid AI response format - missing ui_output_8`);
+        console.log(`[${requestId}] 📄 Response data:`, JSON.stringify(result, null, 2));
         await sendErrorMessage(phoneNumber, 'فشل في معالجة الطلب / Failed to process request');
+        console.log(`[${requestId}] ✅ Error message sent\n`);
       }
     } catch (apiError) {
-      console.log(`⚠️ Processing API not available: ${apiError.message}`);
+      console.log(`[${requestId}] ⚠️ AI Processing API Error:`);
+      console.log(`[${requestId}]    - Error: ${apiError.message}`);
+      console.log(`[${requestId}]    - Code: ${apiError.code || 'N/A'}`);
 
-      // Send acknowledgment message
-      const ackMessage = `تم استلام رقم الموافقة: ${approvalNumber}\n\n` +
-                        `سيتم معالجة طلبك قريباً.\n\n` +
-                        `Approval number received: ${approvalNumber}\n` +
-                        `Your request will be processed shortly.`;
+      if (apiError.response) {
+        console.log(`[${requestId}]    - Status: ${apiError.response.status}`);
+        console.log(`[${requestId}]    - Data:`, JSON.stringify(apiError.response.data, null, 2));
+      }
 
-      await sendResponseMessage(phoneNumber, ackMessage);
+      // Send fallback acknowledgment message (pipeline failed)
+      const fallbackMessage = `تم استلام رقم الموافقة: ${approvalNumber}\n\n` +
+                            `سيتم معالجة طلبك قريباً.\n\n` +
+                            `Approval number received: ${approvalNumber}\n` +
+                            `Your request will be processed shortly.`;
+
+      console.log(`[${requestId}] 📤 Sending fallback message (pipeline unavailable)...`);
+      await sendResponseMessage(phoneNumber, fallbackMessage);
+      console.log(`[${requestId}] ✅ Fallback message sent\n`);
     }
   } catch (error) {
-    console.error('❌ Error in processIncomingMessage:', error.message);
+    console.error(`[${requestId}] ❌ CRITICAL ERROR in processIncomingMessage:`);
+    console.error(`[${requestId}]    - Error: ${error.message}`);
+    console.error(`[${requestId}]    - Stack:`, error.stack);
+
     await sendErrorMessage(phoneNumber, 'حدث خطأ / An error occurred');
+    console.log(`[${requestId}] ✅ Error message sent\n`);
   }
 }
 
 // Send response via Cloud Function
 async function sendResponseMessage(phoneNumber, message) {
+  const sendTimestamp = new Date().toISOString();
+
   try {
+    console.log(`[${sendTimestamp}] 🌐 Calling Cloud Function...`);
+    console.log(`   - Target: ${phoneNumber}`);
+    console.log(`   - Message Length: ${message.length} chars`);
+    console.log(`   - Preview: ${message.substring(0, 100)}...`);
+
     const response = await axios.post(CLOUD_FUNCTION_URL, {
       phone_number: phoneNumber,
       message: message
     }, { timeout: 30000 });
 
     if (response.status === 200) {
-      console.log(`✅ Response sent to ${phoneNumber}`);
+      console.log(`   ✅ WhatsApp message sent successfully to ${phoneNumber}`);
+
+      if (response.data) {
+        const messageId = response.data.response?.messages?.[0]?.id;
+        if (messageId) {
+          console.log(`   📨 Message ID: ${messageId}`);
+        }
+      }
     } else {
-      console.error(`❌ Failed to send response: ${response.status}`);
+      console.error(`   ❌ Failed to send response: ${response.status}`);
+      console.error(`   📄 Response:`, JSON.stringify(response.data, null, 2));
     }
   } catch (error) {
-    console.error(`❌ Error sending response: ${error.message}`);
+    console.error(`   ❌ Error sending WhatsApp message:`);
+    console.error(`   - Error: ${error.message}`);
+    console.error(`   - Code: ${error.code || 'N/A'}`);
+
+    if (error.response) {
+      console.error(`   - Status: ${error.response.status}`);
+      console.error(`   - Data:`, JSON.stringify(error.response.data, null, 2));
+    }
   }
 }
 
